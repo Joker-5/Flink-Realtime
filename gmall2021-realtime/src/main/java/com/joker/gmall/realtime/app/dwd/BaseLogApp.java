@@ -33,9 +33,10 @@ import org.apache.flink.util.OutputTag;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 
+import  com.joker.gmall.realtime.common.constant.KafkaConstant;
+
 public class BaseLogApp {
 
-    private static final int KAFKA_PARTITION = 4;
     private static final String BASE_LOG_TOPIC = "ods_base_log";
     private static final String START_TOPIC = "dwd_start_log";
     private static final String DISPLAY_TOPIC = "dwd_display_log";
@@ -45,7 +46,7 @@ public class BaseLogApp {
         //TODO 1. 基础环境设置
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         //并行度与kafka partition一致
-        env.setParallelism(KAFKA_PARTITION);
+        env.setParallelism(KafkaConstant.KAFKA_PARTITION);
         //CheckPoint设置
 //        env.enableCheckpointing(5000, CheckpointingMode.EXACTLY_ONCE);
 //        env.getCheckpointConfig().setCheckpointTimeout(60000);
