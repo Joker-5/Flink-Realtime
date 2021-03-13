@@ -33,7 +33,7 @@ import org.apache.flink.util.OutputTag;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 
-import  com.joker.gmall.realtime.common.constant.KafkaConstant;
+import com.joker.gmall.realtime.common.constant.KafkaConstant;
 
 public class BaseLogApp {
 
@@ -124,6 +124,8 @@ public class BaseLogApp {
                         if (startObj != null && startObj.size() > 0) {
                             ctx.output(startTag, dataStr);
                         } else {
+                            //页面日志输出到主流->因为曝光日志是页面日志的一种特殊情况，所以也要输出到页面流中
+                            collector.collect(dataStr);
                             //曝光日志
                             JSONArray displays = jsonObject.getJSONArray("displays");
                             if (displays != null && displays.size() > 0) {
@@ -134,9 +136,7 @@ public class BaseLogApp {
                                     obj.put("page_id", pageId);
                                     ctx.output(displayTag, obj.toString());
                                 }
-                                //页面日志输出到主流
-                            } else {
-                                collector.collect(dataStr);
+
                             }
                         }
                     }
@@ -144,9 +144,9 @@ public class BaseLogApp {
         );
         DataStream<String> startDS = pageDS.getSideOutput(startTag);
         DataStream<String> displayDS = pageDS.getSideOutput(displayTag);
-//        pageDS.print("page--->");
-//        startDS.print("start--->");
-//        displayDS.print("display--->");
+        pageDS.print("page--->");
+        startDS.print("start--->");
+        displayDS.print("display--->");
         //TODO 6.分流数据写入kafka
         FlinkKafkaProducer<String> startSink = MyKafkaUtil.getKafkaSink(START_TOPIC);
         FlinkKafkaProducer<String> displaySink = MyKafkaUtil.getKafkaSink(DISPLAY_TOPIC);
