@@ -9,7 +9,9 @@ package com.joker.gmall.realtime.app.func;/*
 
 import com.alibaba.fastjson.JSONObject;
 import com.joker.gmall.realtime.common.constant.GmallConfig;
+import com.joker.gmall.realtime.utils.DimUtil;
 import com.joker.gmall.realtime.utils.MyMysqlUtil;
+import com.sun.org.apache.bcel.internal.generic.DADD;
 import org.apache.commons.lang.StringUtils;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.functions.sink.RichSinkFunction;
@@ -47,6 +49,12 @@ public class DimSink extends RichSinkFunction<JSONObject> {
                 e.printStackTrace();
                 throw new RuntimeException("向phoenix插入数据异常!!!");
             }
+        }
+        //维度数据发生变化则清空该数据在redis中的缓存
+        if (jsonObj.getString("type").equals("update")
+                || jsonObj.getString("type").equals("delete")) {
+//            System.out.println("缓存删除执行成功~~");
+            DimUtil.deleteCache(tableName, dataJsonObj.getString("id"));
         }
     }
 

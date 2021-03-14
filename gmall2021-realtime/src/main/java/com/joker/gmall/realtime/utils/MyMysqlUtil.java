@@ -46,7 +46,7 @@ public class MyMysqlUtil {
                 //反射创建对象
                 T obj = clazz.newInstance();
                 //注意jdbc下标从1开始
-                for (int pos = 1; pos < metaData.getColumnCount(); pos++) {
+                for (int pos = 1; pos <= metaData.getColumnCount(); pos++) {
                     String propertyName = metaData.getColumnName(pos);
                     if (underScoreCaseToCamel) {
                         //工具类简易转换字段风格
