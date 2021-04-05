@@ -17,7 +17,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class MyMysqlUtil {
-    private static final String MYSQL_URL = "jdbc:mysql://hadoop202:3306/gmall_realtime?characterEncoding=utf-8&useSSL=false";
+    private static final String MYSQL_URL = "jdbc:mysql://hadoop202:3306/gmall_realtime?serverTimezone=UTC&characterEncoding=utf-8&useSSL=false";
     private static final String USER = "root";
     private static final String PASSWORD = "123456";
 

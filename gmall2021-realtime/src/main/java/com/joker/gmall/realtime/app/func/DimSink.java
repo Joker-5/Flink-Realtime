@@ -64,7 +64,7 @@ public class DimSink extends RichSinkFunction<JSONObject> {
         Collection<Object> values = dataJsonObj.values();
         String updateSql = "upsert into " + GmallConfig.HBASE_SCHEMA + "." + tableName + "("
                 + StringUtils.join(keys, ",") + ")";
-        //注意此处因为在phoenix中所有字段都是varchar类型，所以值要赢''括起来转为该类型
+        //注意此处因为在phoenix中所有字段都是varchar类型，所以值要用''括起来转为该类型
         String valuesSql = " values ('" + StringUtils.join(values, "','") + "')";
         return updateSql + valuesSql;
     }

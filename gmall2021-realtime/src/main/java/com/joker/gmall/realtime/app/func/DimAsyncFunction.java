@@ -16,6 +16,7 @@ import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.functions.async.ResultFuture;
 import org.apache.flink.streaming.api.functions.async.RichAsyncFunction;
 
+import java.text.ParseException;
 import java.util.Arrays;
 import java.util.concurrent.ExecutorService;
 
@@ -27,15 +28,6 @@ public class DimAsyncFunction<T> extends RichAsyncFunction<T, T> implements DimJ
         this.tableName = tableName;
     }
 
-    @Override
-    public void join(T t, JSONObject jsonObj) {
-
-    }
-
-    @Override
-    public String getKey(T t) {
-        return null;
-    }
 
     @Override
     public void open(Configuration parameters) throws Exception {
@@ -47,19 +39,36 @@ public class DimAsyncFunction<T> extends RichAsyncFunction<T, T> implements DimJ
     public void asyncInvoke(T obj, ResultFuture<T> resultFuture) throws Exception {
         executorService.submit(
                 () -> {
-                    long start = System.currentTimeMillis();
-                    //从流中获取主键
-                    String key = getKey(obj);
-                    //根据主键获取维度数据
-                    JSONObject dimInfoJsonObj = DimUtil.getDimInfo(tableName, key);
-                    if (dimInfoJsonObj != null) {
-                        join(obj, dimInfoJsonObj);
+                    try {
+                        long start = System.currentTimeMillis();
+                        //从流中获取主键
+                        String key = getKey(obj);
+                        //根据主键获取维度数据
+                        JSONObject dimInfoJsonObj = DimUtil.getDimInfo(tableName, key);
+                        System.out.println("维度数据json格式 -> " + dimInfoJsonObj);
+                        if (dimInfoJsonObj != null) {
+                            join(obj, dimInfoJsonObj);
+                        }
+                        System.out.println("维度关联后的对象 -> " + obj);
+                        long end = System.currentTimeMillis();
+                        System.out.println("异步耗时 : " + (end - start) + " ms");
+                        resultFuture.complete(Arrays.asList(obj));
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        throw new RuntimeException(tableName + "维度异步查询失败");
                     }
-                    System.out.println(obj);
-                    long end = System.currentTimeMillis();
-                    System.out.println("异步耗时 : " + (end - start) + " ms");
-                    resultFuture.complete(Arrays.asList(obj));
                 }
         );
+    }
+
+    @Override
+    public void join(T t, JSONObject jsonObj) throws ParseException {
+        System.out.println("join`~~~~");
+    }
+
+    @Override
+    public String getKey(T t) {
+        System.out.println("get key~~~");
+        return null;
     }
 }

@@ -87,6 +87,7 @@ public class DimUtil {
             }
         } catch (Exception e) {
             e.printStackTrace();
+            throw new RuntimeException("redis查询维度数据失败~~~");
         }
 
         return dimInfo;
