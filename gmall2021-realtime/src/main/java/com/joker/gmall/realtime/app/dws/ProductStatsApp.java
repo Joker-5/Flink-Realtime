@@ -8,6 +8,7 @@ package com.joker.gmall.realtime.app.dws;/*
 执行前需要启动的服务:
 -zk,kafka,logger.sh(nginx + 日志处理服务),maxwell,hdfs,hbase,Redis,ClichHouse
 -BaseLogApp,BaseDBApp,OrderWideApp,PaymentWide,ProductStatsApp
+-db因窗口关系需要连续执行两次!
  */
 
 

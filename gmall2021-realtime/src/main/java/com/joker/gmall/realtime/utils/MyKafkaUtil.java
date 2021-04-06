@@ -43,4 +43,14 @@ public class MyKafkaUtil {
         return new FlinkKafkaProducer<>(DEFAULT_TOPIC, serializationSchema, props, FlinkKafkaProducer.Semantic.EXACTLY_ONCE);
     }
 
+    //从kafka读取数据拼接ddl
+    public static String getKafkaDDL(String topic, String groupId) {
+        String ddl = "'connector' = 'kafka', " +
+                " 'topic' = '" + topic + "'," +
+                " 'properties.bootstrap.servers' = '" + KAFKA_SERVER + "', " +
+                " 'properties.group.id' = '" + groupId + "', " +
+                " 'format' = 'json', " +
+                " 'scan.startup.mode' = 'latest-offset' ";
+        return ddl;
+    }
 }
