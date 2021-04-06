@@ -62,7 +62,7 @@ public class DimAsyncFunction<T> extends RichAsyncFunction<T, T> implements DimJ
     }
 
     @Override
-    public void join(T t, JSONObject jsonObj) throws ParseException {
+    public void join(T t, JSONObject jsonObj) throws ParseException, Exception {
         System.out.println("join`~~~~");
     }
 

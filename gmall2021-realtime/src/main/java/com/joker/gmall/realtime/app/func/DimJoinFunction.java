@@ -14,7 +14,7 @@ import java.text.ParseException;
 public interface DimJoinFunction<T> {
 
     //将结果装配给数据流对象
-    void join(T t, JSONObject jsonObj) throws ParseException;
+    void join(T t, JSONObject jsonObj) throws ParseException, Exception;
 
     //从数据流对象中获取主键
     String getKey(T t);
