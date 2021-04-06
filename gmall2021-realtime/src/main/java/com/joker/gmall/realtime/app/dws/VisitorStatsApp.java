@@ -11,8 +11,11 @@ import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
 import com.joker.gmall.realtime.bean.VisitorStats;
 import com.joker.gmall.realtime.common.constant.KafkaConstant;
+import com.joker.gmall.realtime.utils.MyClickHouseUtil;
 import com.joker.gmall.realtime.utils.MyKafkaUtil;
+import org.apache.flink.api.common.eventtime.SerializableTimestampAssigner;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.common.functions.ReduceFunction;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.api.java.tuple.Tuple4;
@@ -25,6 +28,7 @@ import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaConsumer;
 import org.apache.flink.util.Collector;
+import ru.yandex.clickhouse.ClickHouseUtil;
 
 import java.text.SimpleDateFormat;
 import java.time.Duration;
@@ -32,149 +36,227 @@ import java.util.Date;
 
 public class VisitorStatsApp {
     public static void main(String[] args) throws Exception {
-        //TODO 0.基本环境准备
+        //TODO 1.基本环境准备
+        //1.1 设置流式处理环境
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        env.setParallelism(KafkaConstant.KAFKA_PARTITION);
+        //1.2 设置并行度
+        //TODO 一定要主要此处的并行度必须设置的小一些！不然很难看到测试结果
+        env.setParallelism(1);
+        /*
+        //1.3 检查点CK相关设置
+        env.enableCheckpointing(5000, CheckpointingMode.AT_LEAST_ONCE);
+        env.getCheckpointConfig().setCheckpointTimeout(60000);
+        StateBackend fsStateBackend = new FsStateBackend(
+                "hdfs://hadoop202:8020/gmall/flink/checkpoint/VisitorStatsApp");
+        env.setStateBackend(fsStateBackend);
+        System.setProperty("HADOOP_USER_NAME","atguigu");
+        */
 
-        //TODO 1.从 Kafka 的 pv、uv、跳转明细主题中获取数据
-        String groupId = "visitor_stats_app";
+        //TODO 2.从kafka主题中读取数据
+        //2.1 声明读取的主题名以及消费者组
         String pageViewSourceTopic = "dwd_page_log";
         String uniqueVisitSourceTopic = "dwm_unique_visit";
         String userJumpDetailSourceTopic = "dwm_user_jump_detail";
+        String groupId = "visitor_stats_app";
 
-        FlinkKafkaConsumer<String> pageViewSource =
-                MyKafkaUtil.getKafkaSource(pageViewSourceTopic, groupId);
-        FlinkKafkaConsumer<String> uniqueVisitSource =
-                MyKafkaUtil.getKafkaSource(uniqueVisitSourceTopic, groupId);
-        FlinkKafkaConsumer<String> userJumpSource =
-                MyKafkaUtil.getKafkaSource(userJumpDetailSourceTopic, groupId);
-        DataStreamSource<String> pageViewDStream = env.addSource(pageViewSource);
-        DataStreamSource<String> uniqueVisitDStream = env.addSource(uniqueVisitSource);
-        DataStreamSource<String> userJumpDStream = env.addSource(userJumpSource);
-//        pageViewDStream.print("pv-------->");
-//        uniqueVisitDStream.print("uv=====>");
-//        userJumpDStream.print("uj--------->");
+        //2.2 从dwd_page_log主题中读取日志数据
+        FlinkKafkaConsumer<String> pageViewSource = MyKafkaUtil.getKafkaSource(pageViewSourceTopic, groupId);
+        DataStreamSource<String> pvJsonStrDS = env.addSource(pageViewSource);
 
-        //TODO 2.对读取的流进行结构转换
-        //2.1 转换 pv 流
-        SingleOutputStreamOperator<VisitorStats> pageViewStatsDS = pageViewDStream.map(
-                json -> {
-                    JSONObject jsonObj = JSON.parseObject(json);
-                    return new VisitorStats("", "",
-                            jsonObj.getJSONObject("common").getString("vc"),
-                            jsonObj.getJSONObject("common").getString("ch"),
-                            jsonObj.getJSONObject("common").getString("ar"),
-                            jsonObj.getJSONObject("common").getString("is_new"),
-                            0L, 1L, 0L, 0L, jsonObj.getJSONObject("page").getLong("during_time"),
-                            jsonObj.getLong("ts"));
-                });
-        //2.2 转换 uv 流
-        SingleOutputStreamOperator<VisitorStats> uniqueVisitStatsDS = uniqueVisitDStream.map(
-                json -> {
-                    JSONObject jsonObj = JSON.parseObject(json);
-                    return new VisitorStats("", "",
-                            jsonObj.getJSONObject("common").getString("vc"),
-                            jsonObj.getJSONObject("common").getString("ch"),
-                            jsonObj.getJSONObject("common").getString("ar"),
-                            jsonObj.getJSONObject("common").getString("is_new"),
-                            1L, 0L, 0L, 0L, 0L, jsonObj.getLong("ts"));
-                });
-        //2.3 转换 sv 流
-        SingleOutputStreamOperator<VisitorStats> sessionVisitDS = pageViewDStream.process(
+        //2.3 从dwm_unique_visit主题中读取uv数据
+        FlinkKafkaConsumer<String> uvSource = MyKafkaUtil.getKafkaSource(uniqueVisitSourceTopic, groupId);
+        DataStreamSource<String> uvJsonStrDS = env.addSource(uvSource);
+
+        //2.4 从dwm_user_jump_detail主题中读取跳出数据
+        FlinkKafkaConsumer<String> userJumpSource = MyKafkaUtil.getKafkaSource(userJumpDetailSourceTopic, groupId);
+        DataStreamSource<String> userJumpJsonStrDS = env.addSource(userJumpSource);
+
+        //2.5 输出各流中的数据
+        //pvJsonStrDS.print("pv>>>>>");
+        //uvJsonStrDS.print("uv>>>>>");
+        //userJumpJsonStrDS.print("userJump>>>>>");
+
+        // TODO 3.对各个流的数据进行结构的转换  jsonStr->VisitorStats
+        // 3.1 转换pv流
+        SingleOutputStreamOperator<VisitorStats> pvStatsDS = pvJsonStrDS.map(
+                new MapFunction<String, VisitorStats>() {
+                    @Override
+                    public VisitorStats map(String jsonStr) throws Exception {
+                        //将json格式字符串转换为json对象
+                        JSONObject jsonObj = JSON.parseObject(jsonStr);
+                        VisitorStats visitorStats = new VisitorStats(
+                                "",
+                                "",
+                                jsonObj.getJSONObject("common").getString("vc"),
+                                jsonObj.getJSONObject("common").getString("ch"),
+                                jsonObj.getJSONObject("common").getString("ar"),
+                                jsonObj.getJSONObject("common").getString("is_new"),
+                                0L,
+                                1L,
+                                0L,
+                                0L,
+                                jsonObj.getJSONObject("page").getLong("during_time"),
+                                jsonObj.getLong("ts")
+                        );
+                        return visitorStats;
+                    }
+                }
+        );
+        // 3.2 转换uv流
+        SingleOutputStreamOperator<VisitorStats> uvStatsDS = uvJsonStrDS.map(
+                new MapFunction<String, VisitorStats>() {
+                    @Override
+                    public VisitorStats map(String jsonStr) throws Exception {
+                        //将json格式字符串转换为json对象
+                        JSONObject jsonObj = JSON.parseObject(jsonStr);
+                        VisitorStats visitorStats = new VisitorStats(
+                                "",
+                                "",
+                                jsonObj.getJSONObject("common").getString("vc"),
+                                jsonObj.getJSONObject("common").getString("ch"),
+                                jsonObj.getJSONObject("common").getString("ar"),
+                                jsonObj.getJSONObject("common").getString("is_new"),
+                                1L,
+                                0L,
+                                0L,
+                                0L,
+                                0L,
+                                jsonObj.getLong("ts")
+                        );
+                        return visitorStats;
+                    }
+                }
+        );
+        //3.3 转换sv流（Session_count）  其实还是从dwd_page_log中获取数据
+        SingleOutputStreamOperator<VisitorStats> svStatsDS = pvJsonStrDS.process(
                 new ProcessFunction<String, VisitorStats>() {
                     @Override
-                    public void processElement(String json, Context ctx, Collector<VisitorStats> out) {
-                        JSONObject jsonObj = JSON.parseObject(json);
+                    public void processElement(String jsonStr, Context ctx, Collector<VisitorStats> out) throws Exception {
+                        //将json格式字符串转换为json对象
+                        JSONObject jsonObj = JSON.parseObject(jsonStr);
+                        //获取当前页面的lastPageId
                         String lastPageId = jsonObj.getJSONObject("page").getString("last_page_id");
                         if (lastPageId == null || lastPageId.length() == 0) {
-                            VisitorStats visitorStats = new VisitorStats("", "",
+                            VisitorStats visitorStats = new VisitorStats(
+                                    "",
+                                    "",
                                     jsonObj.getJSONObject("common").getString("vc"),
                                     jsonObj.getJSONObject("common").getString("ch"),
                                     jsonObj.getJSONObject("common").getString("ar"),
                                     jsonObj.getJSONObject("common").getString("is_new"),
-                                    0L, 0L, 1L, 0L, 0L, jsonObj.getLong("ts"));
+                                    0L,
+                                    0L,
+                                    1L,
+                                    0L,
+                                    0L,
+                                    jsonObj.getLong("ts")
+                            );
                             out.collect(visitorStats);
                         }
                     }
-                });
-        //2.4 转换跳转流
-        SingleOutputStreamOperator<VisitorStats> userJumpStatDS = userJumpDStream.map(json -> {
-            JSONObject jsonObj = JSON.parseObject(json);
-            return new VisitorStats("", "",
-                    jsonObj.getJSONObject("common").getString("vc"),
-                    jsonObj.getJSONObject("common").getString("ch"),
-                    jsonObj.getJSONObject("common").getString("ar"),
-                    jsonObj.getJSONObject("common").getString("is_new"),
-                    0L, 0L, 0L, 1L, 0L, jsonObj.getLong("ts"));
-        });
-        //TODO 3.将四条流合并起来
-        DataStream<VisitorStats> unionDetailDS = uniqueVisitStatsDS.union(
-                pageViewStatsDS,
-                sessionVisitDS,
-                userJumpStatDS
+                }
         );
-        //TODO 4.设置水位线
-        SingleOutputStreamOperator<VisitorStats> visitorStatsWithWatermarkDS =
-                unionDetailDS.assignTimestampsAndWatermarks(
-                        WatermarkStrategy.<VisitorStats>forBoundedOutOfOrderness(Duration.ofSeconds(1)).
-                                withTimestampAssigner((visitorStats, ts) -> visitorStats.getTs())
-                );
 
-//        visitorStatsWithWatermarkDS.print("after union ==>");
-
-        //TODO 5.分组 选取四个维度作为 key , 使用 Tuple4 组合
-        KeyedStream<VisitorStats, Tuple4<String, String, String, String>> visitorStatsTuple4KeyedStream
-                =
-                visitorStatsWithWatermarkDS
-                        .keyBy(new KeySelector<VisitorStats, Tuple4<String, String, String, String>>() {
-                                   @Override
-                                   public Tuple4<String, String, String, String> getKey(VisitorStats
-                                                                                                visitorStats) throws Exception {
-                                       return new Tuple4<>(visitorStats.getVc()
-                                               , visitorStats.getCh(),
-                                               visitorStats.getAr(),
-                                               visitorStats.getIs_new());
-                                   }
-                               }
+        //3.4 转换跳出流
+        SingleOutputStreamOperator<VisitorStats> userJumpStatsDS = userJumpJsonStrDS.map(
+                new MapFunction<String, VisitorStats>() {
+                    @Override
+                    public VisitorStats map(String jsonStr) throws Exception {
+                        //将json格式字符串转换为json对象
+                        JSONObject jsonObj = JSON.parseObject(jsonStr);
+                        VisitorStats visitorStats = new VisitorStats(
+                                "",
+                                "",
+                                jsonObj.getJSONObject("common").getString("vc"),
+                                jsonObj.getJSONObject("common").getString("ch"),
+                                jsonObj.getJSONObject("common").getString("ar"),
+                                jsonObj.getJSONObject("common").getString("is_new"),
+                                0L,
+                                0L,
+                                0L,
+                                1L,
+                                0L,
+                                jsonObj.getLong("ts")
                         );
-//        visitorStatsTuple4KeyedStream.print("visit -->");
-        //TODO 6.开窗
-        WindowedStream<VisitorStats, Tuple4<String, String, String, String>, TimeWindow> windowDS
-                =
-                visitorStatsTuple4KeyedStream.window(TumblingEventTimeWindows.of(Time.seconds(10)));
-        //TODO 7.聚合统计
-        SingleOutputStreamOperator<VisitorStats> visitorStatsDS =
-                windowDS.reduce((ReduceFunction<VisitorStats>) (stats1, stats2) -> {
-                            //把度量数据两两相加
-                            stats1.setPv_ct(stats1.getPv_ct() + stats2.getPv_ct());
-                            stats1.setUv_ct(stats1.getUv_ct() + stats2.getUv_ct());
-                            stats1.setUj_ct(stats1.getUj_ct() + stats2.getUj_ct());
-                            stats1.setSv_ct(stats1.getSv_ct() + stats2.getSv_ct());
-                            stats1.setDur_sum(stats1.getDur_sum() + stats2.getDur_sum());
-                            //System.out.println("相加成功~~~");
-                            return stats1;
-                        }
-                        , new ProcessWindowFunction<VisitorStats, VisitorStats, Tuple4<String, String, String,
-                                String>, TimeWindow>() {
-                            @Override
-                            public void process(Tuple4<String, String, String, String> tuple4, Context context,
-                                                Iterable<VisitorStats> visitorStatsIn,
-                                                Collector<VisitorStats> visitorStatsOut) {
-                                System.out.println("处理时间！！");
-                                //补时间字段
-                                SimpleDateFormat simpleDateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-                                for (VisitorStats visitorStats : visitorStatsIn) {
-                                    String startDate = simpleDateFormat.format(new Date(context.window().getStart()));
-                                    String endDate = simpleDateFormat.format(new Date(context.window().getEnd()));
-                                    visitorStats.setStt(startDate);
-                                    visitorStats.setEdt(endDate);
-                                    visitorStatsOut.collect(visitorStats);
+                        return visitorStats;
+                    }
+                }
+        );
+
+        //TODO 4. 将4条流合并到一起   注意：只能合并结构相同的流
+        DataStream<VisitorStats> unionDS = pvStatsDS.union(uvStatsDS, svStatsDS, userJumpStatsDS);
+
+        //TODO 5.设置Watermmark以及提取事件时间
+        SingleOutputStreamOperator<VisitorStats> visitorStatsWithWatermarkDS = unionDS.assignTimestampsAndWatermarks(
+                WatermarkStrategy.<VisitorStats>forBoundedOutOfOrderness(Duration.ofSeconds(3))
+                        .withTimestampAssigner(
+                                new SerializableTimestampAssigner<VisitorStats>() {
+                                    @Override
+                                    public long extractTimestamp(VisitorStats visitorStats, long recordTimestamp) {
+                                        return visitorStats.getTs();
+                                    }
                                 }
-                            }
+                        )
+        );
+
+        //TODO 6.分组  按照地区、渠道、版本、新老访客维度进行分组，因为我们这里有4个维度，所以将它们封装为一个Tuple4
+        KeyedStream<VisitorStats, Tuple4<String, String, String, String>> keyedDS = visitorStatsWithWatermarkDS.keyBy(
+                new KeySelector<VisitorStats, Tuple4<String, String, String, String>>() {
+                    @Override
+                    public Tuple4<String, String, String, String> getKey(VisitorStats visitorStats) throws Exception {
+                        return Tuple4.of(
+                                visitorStats.getAr(),
+                                visitorStats.getCh(),
+                                visitorStats.getVc(),
+                                visitorStats.getIs_new()
+                        );
+                    }
+                }
+        );
+
+        //TODO 7.开窗
+        WindowedStream<VisitorStats, Tuple4<String, String, String, String>, TimeWindow> windowDS = keyedDS.window(
+                TumblingEventTimeWindows.of(Time.seconds(10))
+        );
+
+        //TODO 8.对窗口的数据进行聚合   聚合结束之后，需要补充统计的起止时间
+        SingleOutputStreamOperator<VisitorStats> reduceDS = windowDS.reduce(
+                new ReduceFunction<VisitorStats>() {
+                    @Override
+                    public VisitorStats reduce(VisitorStats stats1, VisitorStats stats2) throws Exception {
+                        stats1.setPv_ct(stats1.getPv_ct() + stats2.getPv_ct());
+                        stats1.setUv_ct(stats1.getUv_ct() + stats2.getUv_ct());
+                        stats1.setSv_ct(stats1.getSv_ct() + stats2.getSv_ct());
+                        stats1.setDur_sum(stats1.getDur_sum() + stats2.getDur_sum());
+                        return stats1;
+                    }
+                },
+                new ProcessWindowFunction<VisitorStats, VisitorStats, Tuple4<String, String, String, String>, TimeWindow>() {
+                    @Override
+                    public void process(Tuple4<String, String, String, String> tuple4, Context context, Iterable<VisitorStats> elements, Collector<VisitorStats> out) throws Exception {
+                        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+                        for (VisitorStats visitorStats : elements) {
+                            //获取窗口的开始时间
+                            String startDate = sdf.format(new Date(context.window().getStart()));
+                            //获取窗口的结束时间
+                            String endDate = sdf.format(new Date(context.window().getEnd()));
+                            visitorStats.setStt(startDate);
+                            visitorStats.setEdt(endDate);
+                            visitorStats.setTs(new Date().getTime());
+                            out.collect(visitorStats);
                         }
-                );
-        //TODO 最后的reduce输入不出来
-        visitorStatsDS.print("reduce==>");
+                    }
+                }
+        );
+
+//        reduceDS.print(">>>>>reduceDS");
+
+        //TODO 9.向Clickhouse中插入数据
+        reduceDS.addSink(
+                MyClickHouseUtil.getJdbcSink("insert into visitor_stats_2021 values(?,?,?,?,?,?,?,?,?,?,?,?)")
+        );
+
         env.execute();
+
     }
 }

@@ -14,4 +14,8 @@ public class GmallConfig {
     public static final String PHOENIX_SERVER = "jdbc:phoenix:hadoop202,hadoop203,hadoop204:2181";
     //phoenix 驱动
     public static final String PHOENIX_DRIVER = "org.apache.phoenix.jdbc.PhoenixDriver";
+    //clickhouse url
+    public static final String CLICKHOUSE_URL = "jdbc:clickhouse://192.168.198.136:8123";
+    //clickhouse 驱动
+    public static final String CLICKHOUSE_DRIVER = "ru.yandex.clickhouse.ClickHouseDriver";
 }
