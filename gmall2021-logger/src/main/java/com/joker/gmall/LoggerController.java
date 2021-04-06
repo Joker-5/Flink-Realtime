@@ -1,4 +1,4 @@
-package com.joker.gmall.controller;/*
+package com.joker.gmall;/*
  *项目名: gmall2021-parent
  *文件名: LoggerController
  *创建者: Joker
